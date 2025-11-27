@@ -1,0 +1,115 @@
+#!/bin/bash
+# Script: Brianna Database & Kraken2 Pipeline
+# Purpose: Set up conda environment, install tools, download methylotroph genomes, build Kraken2 DB, and run Kraken2
+# Author: Brianna
+
+# ---------------------------
+# 1. Update system packages
+# ---------------------------
+sudo apt update && sudo apt upgrade -y
+sudo apt install build-essential dkms linux-headers-$(uname -r) wget git perl cpanminus -y
+
+# ---------------------------
+# 2. Install Miniconda
+# ---------------------------
+cd ~
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
+export PATH="$HOME/miniconda3/bin:$PATH"
+echo 'export PATH="$HOME/miniconda3/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+conda --version
+conda update -n base -c defaults conda -y
+
+# ---------------------------
+# 3. Create conda environment
+# ---------------------------
+conda create -n brianna_env python=3.10 -y
+conda activate brianna_env
+
+# ---------------------------
+# 4. Install bioinformatics tools
+# ---------------------------
+conda install -c bioconda fastp -y
+conda install -c bioconda trimmomatic -y
+conda install -c bioconda kraken2=2.1.2 -y
+conda install -c conda-forge notebook -y
+
+# ---------------------------
+# 5. Prepare directories
+# ---------------------------
+mkdir -p ~/reads
+mkdir -p ~/methanotrophs_fna
+mkdir -p ~/methanotrophs_fna_uncompressed
+mkdir -p ~/kraken2_db
+mkdir -p ~/kraken2_methanotroph_db
+
+# ---------------------------
+# 6. Move sequencing reads
+# ---------------------------
+mv ~/Genomes/*.fastq.gz ~/reads/ 2>/dev/null
+mv ~/Activated_sludge/*.fastq.gz ~/reads/ 2>/dev/null
+
+# ---------------------------
+# 7. Preprocess reads with fastp
+# ---------------------------
+fastp -i ~/reads/OAS_1.fq -o ~/reads/OAS_1_out.fq -h ~/reads/OAS_1_fastp_report.html
+
+# ---------------------------
+# 8. Download RefSeq genomes for selected methylotrophic genera
+# ---------------------------
+genera=(
+  Methylobacterium
+  Methylomonas
+  Methylosinus
+  Methylocystis
+  Methylacidiphilum
+  Methylacidimicrobium
+  Methylococcus
+  Methylocella
+  Methylomicrobium
+  Methylocaldum
+  Methylotuvimicrobium
+  Methylosarcina
+)
+
+cd ~/methanotrophs_fna
+wget -q ftp://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/assembly_summary.txt
+
+for genus in "${genera[@]}"; do
+    echo "Processing genus: $genus"
+    awk -F "\t" -v g="$genus" '$8==g && $12=="Complete Genome" {print $20}' assembly_summary.txt > ftp_paths.txt
+    while read url; do
+        fname=$(basename "$url")
+        wget -nc "$url/${fname}_genomic.fna.gz"
+    done < ftp_paths.txt
+done
+
+# ---------------------------
+# 9. Uncompress genomes
+# ---------------------------
+for f in ~/methanotrophs_fna/*.fna.gz; do
+    gunzip -c "$f" > ~/methanotrophs_fna_uncompressed/"$(basename "${f%.gz}")"
+done
+
+# ---------------------------
+# 10. Build Kraken2 database
+# ---------------------------
+kraken2-build --download-taxonomy --db ~/kraken2_methanotroph_db --use-ftp
+kraken2-build --add-to-library ~/methanotrophs_fna_uncompressed/*.fna --db ~/kraken2_methanotroph_db
+kraken2-build --build --db ~/kraken2_methanotroph_db --threads 4
+
+# ---------------------------
+# 11. Run Kraken2 classification
+# ---------------------------
+kraken2 --db ~/kraken2_methanotroph_db \
+        --paired ~/reads/OAS_1_clean.fq.gz ~/reads/OAS_2_clean.fq.gz \
+        --output ~/reads/kraken2_output_OAS.txt \
+        --report ~/reads/kraken2_report_OAS.txt \
+        --use-names \
+        --threads 4
+
+# ---------------------------
+# 12. Done
+# ---------------------------
+echo "Database setup and Kraken2 classification complete."
