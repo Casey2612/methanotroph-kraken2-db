@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it."
 title: "Methanotroph Kraken2 Database"
 version: "v1.0.0"
-date-released: "2025-03-08"
+date-released: "2025-11"
 url: "https://github.com/Casey2612/methanotroph-kraken2-db"
 authors:
   - given-names: "Brianna"
